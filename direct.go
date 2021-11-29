@@ -53,7 +53,7 @@ func (f *File) NewDirectWriter(sheet string, maxBufferSize int) (*DirectWriter, 
 	}
 
 	dw.sheetPath = f.sheetMap[trimSheetName(sheet)]
-	f.directStreams = append(f.directStreams, dw)
+	f.directWriters = append(f.directWriters, dw)
 
 	dw.writeString(XMLHeader + `<worksheet` + templateNamespaceIDMap)
 	bulkAppendFields(dw, dw.worksheet, 2, 5)
