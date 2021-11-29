@@ -196,6 +196,18 @@ func (f *File) writeToZip(zw *zip.Writer) error {
 		_, err = fi.Write(content.([]byte))
 		return true
 	})
+	if err != nil {
+		return err
+	}
 
-	return err
+	for _, d := range f.directWriters {
+		fi, err := zw.Create(d.sheetPath)
+		if err != nil {
+			return err
+		}
+		if _, err := d.WriteTo(fi); err != nil {
+			return err
+		}
+	}
+	return nil
 }
