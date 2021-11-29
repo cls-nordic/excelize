@@ -8,7 +8,7 @@ import (
 )
 
 // DirectWriter is a simpler and optimized version of the StreamWriter. Its primary use is sending large amount of sheet data row by row directly
-// to a io.Writer. Typical usecase is an API writing directly to a TCP connection, with minimal server side buffering.
+// to a io.Writer. The typical use case is an API writing directly to a TCP connection, with minimal server side buffering.
 type DirectWriter struct {
 	sync.RWMutex
 	File          *File
@@ -25,14 +25,18 @@ type DirectWriter struct {
 	done          chan bool
 }
 
-// NewDirectWriter return a direct writer struct by given worksheet name for
-// generate new worksheet with large amounts of data. Similar limitations apply
+// NewDirectWriter return a new DirectWriter for the given sheet name. Similar limitations apply
 // as when using the StreamWriter. To enable writing an xlsx file concurrently to
 // a io.Writer you must:
-// - create a File
-// - create at least one DirectWriter
+//
+// - create a File.
+//
+// - create at least one DirectWriter.
+//
 // - launch writing using file.WriteTo() in a separate goroutine, this call will block until all direct writers are flushed.
-// - add data to direct writers using AddRow. then call Flush to close it.
+//
+// - add data using AddRow, then call Flush to close it.
+//
 // - wait for the goroutine to return
 func (f *File) NewDirectWriter(sheet string, maxBufferSize int) (*DirectWriter, error) {
 	sheetID := f.getSheetID(sheet)
@@ -60,7 +64,7 @@ func (f *File) NewDirectWriter(sheet string, maxBufferSize int) (*DirectWriter, 
 	return dw, err
 }
 
-// AddRow is an optimized version of SetRow useful when streaming a large data file row by raw without any gaps.
+// AddRow is used when streaming a large data file row by raw without any gaps.
 // It omits any individual row or cell reference values and only accept []Cell to reduce interface{} related allocations.
 func (dw *DirectWriter) AddRow(values []Cell, opts ...RowOpts) error {
 	if !dw.sheetWritten {
@@ -120,7 +124,7 @@ func (dw *DirectWriter) SetColWidth(min, max int, width float64) error {
 	return nil
 }
 
-// Flush ending the streaming writing process.
+// Flush ends the streaming writing process.
 func (dw *DirectWriter) Flush() error {
 	if err := dw.flush(); err != nil {
 		return err
@@ -143,12 +147,23 @@ func (dw *DirectWriter) Flush() error {
 	return nil
 }
 
+// WriteTo writes the output of the DirectWriter to w. The call will block until the DirectWriter is closed by a call to Flush.
 func (dw *DirectWriter) WriteTo(w io.Writer) (int64, error) {
 	dw.Lock()
 	dw.out = w
 	dw.Unlock()
 	<-dw.done
 	return dw.bytesWritten, nil
+}
+
+func (dw *DirectWriter) Write(p []byte) (n int, err error) {
+	dw.buf = append(dw.buf, p...)
+	return len(p), nil
+}
+
+func (dw *DirectWriter) WriteString(s string) (n int, err error) {
+	dw.buf = append(dw.buf, s...)
+	return len(s), nil
 }
 
 func (dw *DirectWriter) flush() error {
@@ -165,16 +180,6 @@ func (dw *DirectWriter) flush() error {
 	dw.bytesWritten += int64(n)
 	dw.buf = dw.buf[:0]
 	return nil
-}
-
-func (dw *DirectWriter) Write(p []byte) (n int, err error) {
-	dw.buf = append(dw.buf, p...)
-	return len(p), nil
-}
-
-func (dw *DirectWriter) WriteString(s string) (n int, err error) {
-	dw.buf = append(dw.buf, s...)
-	return len(s), nil
 }
 
 func (dw *DirectWriter) writeString(s string) {

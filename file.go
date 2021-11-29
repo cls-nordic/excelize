@@ -163,6 +163,17 @@ func (f *File) writeToZip(zw *zip.Writer) error {
 	f.sharedStringsWriter()
 	f.styleSheetWriter()
 
+	var pathDone = make(map[string]bool)
+	for _, d := range f.directWriters {
+		fi, err := zw.Create(d.sheetPath)
+		if err != nil {
+			return err
+		}
+		if _, err := d.WriteTo(fi); err != nil {
+			return err
+		}
+		pathDone[d.sheetPath] = true
+	}
 	for path, stream := range f.streams {
 		fi, err := zw.Create(path)
 		if err != nil {
@@ -179,13 +190,14 @@ func (f *File) writeToZip(zw *zip.Writer) error {
 			return err
 		}
 		_ = stream.rawData.Close()
+		pathDone[path] = true
 	}
 	var err error
 	f.Pkg.Range(func(path, content interface{}) bool {
 		if err != nil {
 			return false
 		}
-		if _, ok := f.streams[path.(string)]; ok {
+		if _, ok := pathDone[path.(string)]; ok {
 			return true
 		}
 		var fi io.Writer
@@ -196,18 +208,5 @@ func (f *File) writeToZip(zw *zip.Writer) error {
 		_, err = fi.Write(content.([]byte))
 		return true
 	})
-	if err != nil {
-		return err
-	}
-
-	for _, d := range f.directWriters {
-		fi, err := zw.Create(d.sheetPath)
-		if err != nil {
-			return err
-		}
-		if _, err := d.WriteTo(fi); err != nil {
-			return err
-		}
-	}
-	return nil
+	return err
 }
