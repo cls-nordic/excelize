@@ -64,7 +64,7 @@ func (f *File) NewDirectWriter(sheet string, maxBufferSize int) (*DirectWriter, 
 	return dw, err
 }
 
-// AddRow is used when streaming a large data file row by raw without any gaps.
+// AddRow is used when streaming a large data file row by row without any gaps.
 // It omits any individual row or cell reference values and only accept []Cell to reduce interface{} related allocations.
 func (dw *DirectWriter) AddRow(values []Cell, opts ...RowOpts) error {
 	if !dw.sheetWritten {
