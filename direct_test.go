@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -126,8 +125,7 @@ func TestDirectWriter(t *testing.T) {
 				f.Close()
 			}
 		}
-
-		os.WriteFile("test.xlsx", out.Bytes(), os.ModePerm)
+		// os.WriteFile("test.xlsx", out.Bytes(), os.ModePerm)
 	})
 }
 
