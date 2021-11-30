@@ -41,6 +41,10 @@ func TestDirectWriter(t *testing.T) {
 
 		dw, err := file.NewDirectWriter("Sheet1", 8192)
 		require.NoError(t, err)
+
+		require.NoError(t, dw.SetColWidth(1, 2, 20))
+		expectedCols := `<cols><col min="1" max="2" width="20.000000" customWidth="1"/></cols>`
+
 		err = dw.AddRow(row)
 		assert.NoError(t, err)
 		err = dw.Flush()
@@ -49,10 +53,8 @@ func TestDirectWriter(t *testing.T) {
 		var out bytes.Buffer
 		_, err = dw.WriteTo(&out)
 		require.NoError(t, err)
-		assert.Contains(t,
-			out.String(),
-			expectedRow,
-		)
+		assert.Contains(t, out.String(), expectedCols)
+		assert.Contains(t, out.String(), expectedRow)
 	})
 	t.Run("concurrent-writer", func(t *testing.T) {
 		file, row, expectedRow := setupTestFileRow()
