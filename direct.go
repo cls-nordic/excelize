@@ -202,7 +202,7 @@ func (dw *DirectWriter) writeString(s string) {
 func appendCellNoRef(dst []byte, c xlsxC) []byte {
 	dst = append(dst, `<c`...)
 	if c.XMLSpace.Value != "" {
-		dst = append(dst, ` xml:"`...)
+		dst = append(dst, ` xml:`...)
 		dst = append(dst, c.XMLSpace.Name.Local...)
 		dst = append(dst, `="`...)
 		dst = append(dst, c.XMLSpace.Value...)

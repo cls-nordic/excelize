@@ -134,9 +134,11 @@ func setupTestFileRow() (*File, []Cell, string) {
 	ts, _ := file.NewStyle(&Style{NumFmt: 22})
 	row := []Cell{
 		{Value: "foo"},
+		// add trailing ws to trigger xml:space
+		{Value: "bar "},
 		{Value: time.Date(2021, 11, 29, 0, 0, 0, 0, time.UTC), StyleID: ts},
 		{Value: 123},
 	}
-	expected := fmt.Sprintf("<sheetData><row><c t=\"str\"><v>foo</v></c><c s=\"%d\"><v>44529</v></c><c><v>123</v></c></row></sheetData>", ts)
+	expected := fmt.Sprintf("<sheetData><row><c t=\"str\"><v>foo</v></c><c xml:space=\"preserve\" t=\"str\"><v>bar </v></c><c s=\"%d\"><v>44529</v></c><c><v>123</v></c></row></sheetData>", ts)
 	return file, row, expected
 }
