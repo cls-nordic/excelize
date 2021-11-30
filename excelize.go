@@ -37,6 +37,7 @@ type File struct {
 	checked          map[string]bool
 	sheetMap         map[string]string
 	streams          map[string]*StreamWriter
+	directWriters    []*DirectWriter
 	tempFiles        sync.Map
 	CalcChain        *xlsxCalcChain
 	Comments         map[string]*xlsxComments

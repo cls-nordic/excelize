@@ -1,4 +1,4 @@
-module github.com/xuri/excelize/v2
+module github.com/cls-nordic/excelize
 
 go 1.15
 
