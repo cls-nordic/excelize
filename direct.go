@@ -78,7 +78,9 @@ func (dw *DirectWriter) AddRow(values []Cell, opts ...RowOpts) error {
 		dw.writeString(`<sheetData>`)
 		dw.sheetWritten = true
 	}
-	dw.writeString(`<row`)
+	dw.writeString(`<row r="`)
+	dw.buf = strconv.AppendInt(dw.buf, int64(dw.rowCount), 10)
+	dw.buf = append(dw.buf, '"')
 	if len(opts) > 0 {
 		attrs, err := marshalRowAttrs(opts...)
 		if err != nil {

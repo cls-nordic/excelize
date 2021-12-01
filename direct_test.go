@@ -24,10 +24,10 @@ func BenchmarkAddRow(b *testing.B) {
 	}
 	dw, err := file.NewDirectWriter("Sheet1", 8192)
 	require.NoError(b, err)
-	go dw.WriteTo(io.Discard)
+	go dw.WriteTo(io.Discard) //nolint
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		dw.AddRow(row)
+		_ = dw.AddRow(row)
 	}
 	err = dw.Flush()
 	assert.NoError(b, err)
@@ -141,6 +141,6 @@ func setupTestFileRow() (*File, []Cell, string) {
 		{Value: time.Date(2021, 11, 29, 0, 0, 0, 0, time.UTC), StyleID: ts},
 		{Value: 123},
 	}
-	expected := fmt.Sprintf("<sheetData><row><c t=\"str\"><v>foo</v></c><c xml:space=\"preserve\" t=\"str\"><v>bar </v></c><c s=\"%d\"><v>44529</v></c><c><v>123</v></c></row></sheetData>", ts)
+	expected := fmt.Sprintf("<sheetData><row r=\"1\"><c t=\"str\"><v>foo</v></c><c xml:space=\"preserve\" t=\"str\"><v>bar </v></c><c s=\"%d\"><v>44529</v></c><c><v>123</v></c></row></sheetData>", ts)
 	return file, row, expected
 }
