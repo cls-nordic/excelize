@@ -1,6 +1,7 @@
 package excelize
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -15,7 +16,6 @@ type DirectWriter struct {
 	File          *File
 	Sheet         string
 	SheetID       int
-	sheetWritten  bool
 	cols          string
 	worksheet     *xlsxWorksheet
 	sheetPath     string
@@ -25,6 +25,8 @@ type DirectWriter struct {
 	out           io.Writer
 	done          chan bool
 	rowCount      int
+	maxColLengths []int
+	waitMode      bool
 }
 
 // NewDirectWriter return a new DirectWriter for the given sheet name. If the sheet doesn't yet exists it is created.
@@ -35,9 +37,9 @@ type DirectWriter struct {
 //
 // - create at least one DirectWriter.
 //
-// - launch writing using file.WriteTo() in a separate goroutine, this call will block until all direct writers are flushed.
+// - launch writing using file.WriteTo() in a separate goroutine, this call will block until all direct writers are closed.
 //
-// - add data using AddRow, then call Flush to close it.
+// - add data using AddRow, then call Close.
 //
 // - wait for the goroutine to return
 func (f *File) NewDirectWriter(sheet string, maxBufferSize int) (*DirectWriter, error) {
@@ -62,34 +64,44 @@ func (f *File) NewDirectWriter(sheet string, maxBufferSize int) (*DirectWriter, 
 	dw.sheetPath = f.sheetMap[trimSheetName(sheet)]
 	f.directWriters = append(f.directWriters, dw)
 
-	dw.writeString(XMLHeader + `<worksheet` + templateNamespaceIDMap)
-	bulkAppendFields(dw, dw.worksheet, 2, 5)
 	return dw, err
 }
 
-// AddRow is used when streaming a large data file row by row without any gaps.
-// It omits any individual row or cell reference values and only accept []Cell to reduce interface{} related allocations.
-func (dw *DirectWriter) AddRow(values []Cell, opts ...RowOpts) error {
-	dw.rowCount++
-	if !dw.sheetWritten {
-		if len(dw.cols) > 0 {
-			dw.writeString("<cols>" + dw.cols + "</cols>")
+// SetWait enables or disables the wait mode. In wait mode nothing is flushed to writer (if any), even if the buffer grows beyond maxBufferSize.
+func (dw *DirectWriter) SetWait(b bool) error {
+	if b {
+		if dw.bytesWritten > 0 {
+			return errors.New("Can't enable wait mode since first data already written.")
 		}
-		dw.writeString(`<sheetData>`)
-		dw.sheetWritten = true
+		dw.waitMode = true
+		return nil
 	}
-	dw.writeString(`<row r="`)
+	dw.waitMode = false
+	return nil
+}
+
+// AddRow is used for streaming a large data file row by row, without any gaps.
+// It omits  cell reference values and only accept []Cell to reduce interface{} related allocations.
+// It returns the number of bytes currently in the write buffer.
+func (dw *DirectWriter) AddRow(values []Cell, opts ...RowOpts) (buffered int, err error) {
+	dw.rowCount++
+	dw.buf = append(dw.buf, `<row r="`...)
 	dw.buf = strconv.AppendInt(dw.buf, int64(dw.rowCount), 10)
 	dw.buf = append(dw.buf, '"')
 	if len(opts) > 0 {
 		attrs, err := marshalRowAttrs(opts...)
 		if err != nil {
-			return err
+			return len(dw.buf), err
 		}
-		dw.writeString(attrs)
+		dw.buf = append(dw.buf, attrs...)
 	}
-	dw.writeString(`>`)
-	for _, val := range values {
+	dw.buf = append(dw.buf, '>')
+	if len(values) > len(dw.maxColLengths) {
+		l := make([]int, len(values))
+		copy(l, dw.maxColLengths)
+		dw.maxColLengths = l
+	}
+	for i, val := range values {
 		c := xlsxC{
 			S: val.StyleID,
 		}
@@ -97,28 +109,33 @@ func (dw *DirectWriter) AddRow(values []Cell, opts ...RowOpts) error {
 			c.F = &xlsxF{Content: val.Formula}
 		}
 		if err := setCellValFunc(&c, val.Value); err != nil {
-			dw.writeString(`</row>`)
-			return err
+			dw.buf = append(dw.buf, "</row>"...)
+			return len(dw.buf), err
+		}
+		if l := len(c.V); l > dw.maxColLengths[i] {
+			dw.maxColLengths[i] = l
 		}
 		dw.buf = appendCellNoRef(dw.buf, c)
 	}
-	dw.writeString(`</row>`)
-	if len(dw.buf) > dw.maxBufferSize {
-		return dw.tryFlush()
+	dw.buf = append(dw.buf, "</row>"...)
+	if len(dw.buf) > dw.maxBufferSize && !dw.waitMode {
+		err := dw.tryFlush()
+		return len(dw.buf), err
 	}
-	return nil
+	return len(dw.buf), nil
+}
+
+// MaxColumnLengths returns the max lengths (in bytes as written to XML) for each column written so far.
+func (dw *DirectWriter) MaxColumnLengths() []int {
+	return dw.maxColLengths
 }
 
 // SetColWidth provides a function to set the width of a single column or
-// multiple columns for the DirectWriter. Note that you must call
-// the 'SetColWidth' function before any call to 'AddRow' function. For example set
-// the width column B:C as 20:
-//
-//    err := directwriter.SetColWidth(2, 3, 20)
-//
+// multiple columns for the DirectWriter. Since column definitions need to be written before sheet data, either use this
+// function before the first call to AddRow, or set the writer in wait mode using SetWait.
 func (dw *DirectWriter) SetColWidth(min, max int, width float64) error {
-	if dw.sheetWritten {
-		return ErrStreamSetColWidth
+	if dw.bytesWritten > 0 {
+		return errors.New("Can't set col width since first data already written.")
 	}
 	if min > TotalColumns || max > TotalColumns {
 		return ErrColumnNumber
@@ -136,17 +153,13 @@ func (dw *DirectWriter) SetColWidth(min, max int, width float64) error {
 	return nil
 }
 
-// Flush ends the streaming writing process.
-func (dw *DirectWriter) Flush() error {
-	if !dw.sheetWritten {
-		dw.writeString(`<sheetData>`)
-		dw.sheetWritten = true
-	}
-	dw.writeString(`</sheetData>`)
+// Close ends the streaming writing process.
+func (dw *DirectWriter) Close() error {
+	dw.buf = append(dw.buf, `</sheetData>`...)
 	bulkAppendFields(dw, dw.worksheet, 8, 15)
 	bulkAppendFields(dw, dw.worksheet, 17, 38)
 	bulkAppendFields(dw, dw.worksheet, 40, 40)
-	dw.writeString(`</worksheet>`)
+	dw.buf = append(dw.buf, `</worksheet>`...)
 
 	if err := dw.tryFlush(); err != nil {
 		return err
@@ -160,13 +173,19 @@ func (dw *DirectWriter) Flush() error {
 	return nil
 }
 
-// WriteTo writes the output of the DirectWriter to w. The call will block until the DirectWriter is closed by a call to Flush.
+// WriteTo writes the output of the DirectWriter to w. The call will block until the DirectWriter is closed by a call to Close.
 func (dw *DirectWriter) WriteTo(w io.Writer) (int64, error) {
 	select {
 	case <-dw.done:
-		// in case stream is already done, write buffer now
-		n, err := w.Write(dw.buf)
-		return int64(n), err
+		if dw.bytesWritten > 0 {
+			return 0, errors.New("Cant't write to new writer w since part of the data already been written and flushed.")
+		}
+		n, err := w.Write(dw.buildHeader())
+		if err != nil {
+			return int64(n), err
+		}
+		n2, err := w.Write(dw.buf)
+		return int64(n + n2), err
 	default:
 		dw.Lock()
 		dw.out = w
@@ -181,11 +200,29 @@ func (dw *DirectWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
+func (dw *DirectWriter) buildHeader() []byte {
+	var header bytes.Buffer
+	header.WriteString(XMLHeader + `<worksheet` + templateNamespaceIDMap)
+	bulkAppendFields(&header, dw.worksheet, 2, 5)
+	if len(dw.cols) > 0 {
+		header.WriteString("<cols>" + dw.cols + "</cols>")
+	}
+	header.WriteString(`<sheetData>`)
+	return header.Bytes()
+}
+
 func (dw *DirectWriter) tryFlush() error {
 	dw.Lock()
 	if dw.out == nil {
 		dw.Unlock()
 		return nil
+	}
+	if dw.bytesWritten == 0 {
+		n, err := dw.out.Write(dw.buildHeader())
+		if err != nil {
+			return err
+		}
+		dw.bytesWritten += int64(n)
 	}
 	n, err := dw.out.Write(dw.buf)
 	dw.Unlock()
@@ -195,10 +232,6 @@ func (dw *DirectWriter) tryFlush() error {
 	dw.bytesWritten += int64(n)
 	dw.buf = dw.buf[:0]
 	return nil
-}
-
-func (dw *DirectWriter) writeString(s string) {
-	dw.buf = append(dw.buf, s...)
 }
 
 func appendCellNoRef(dst []byte, c xlsxC) []byte {

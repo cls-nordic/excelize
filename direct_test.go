@@ -27,9 +27,9 @@ func BenchmarkAddRow(b *testing.B) {
 	go dw.WriteTo(io.Discard) //nolint
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		_ = dw.AddRow(row)
+		_, _ = dw.AddRow(row)
 	}
-	err = dw.Flush()
+	err = dw.Close()
 	assert.NoError(b, err)
 	b.SetBytes(dw.bytesWritten)
 	b.ReportAllocs()
@@ -45,16 +45,18 @@ func TestDirectWriter(t *testing.T) {
 		require.NoError(t, dw.SetColWidth(1, 2, 20))
 		expectedCols := `<cols><col min="1" max="2" width="20.000000" customWidth="1"/></cols>`
 
-		err = dw.AddRow(row)
+		_, err = dw.AddRow(row)
 		assert.NoError(t, err)
-		err = dw.Flush()
+		err = dw.Close()
 		assert.NoError(t, err)
 
 		var out bytes.Buffer
 		_, err = dw.WriteTo(&out)
 		require.NoError(t, err)
+		assert.True(t, bytes.HasPrefix(out.Bytes(), dw.buildHeader()))
 		assert.Contains(t, out.String(), expectedCols)
 		assert.Contains(t, out.String(), expectedRow)
+		assert.True(t, bytes.HasSuffix(out.Bytes(), []byte("</worksheet>")))
 	})
 	t.Run("concurrent-writer", func(t *testing.T) {
 		file, row, expectedRow := setupTestFileRow()
@@ -69,17 +71,19 @@ func TestDirectWriter(t *testing.T) {
 			ch <- err
 		}()
 
-		err = dw.AddRow(row)
+		_, err = dw.AddRow(row)
 		assert.NoError(t, err)
-		err = dw.Flush()
+		err = dw.Close()
 		assert.NoError(t, err)
 
 		err = <-ch
 		require.NoError(t, err)
+		assert.True(t, bytes.HasPrefix(out.Bytes(), dw.buildHeader()))
 		assert.Contains(t,
 			out.String(),
 			expectedRow,
 		)
+		assert.True(t, bytes.HasSuffix(out.Bytes(), []byte("</worksheet>")))
 	})
 	t.Run("multiple-concurrent-writers", func(t *testing.T) {
 		file, row, _ := setupTestFileRow()
@@ -107,10 +111,10 @@ func TestDirectWriter(t *testing.T) {
 		// for each sheet write some rows, and then close it
 		for _, dw := range dws {
 			for i := 0; i < rows; i++ {
-				err = dw.AddRow(row)
+				_, err = dw.AddRow(row)
 				assert.NoError(t, err)
 			}
-			err = dw.Flush()
+			err = dw.Close()
 			require.NoError(t, err)
 		}
 
@@ -128,6 +132,34 @@ func TestDirectWriter(t *testing.T) {
 			}
 		}
 		// os.WriteFile("test.xlsx", out.Bytes(), os.ModePerm)
+	})
+	t.Run("wait-mode", func(t *testing.T) {
+		file, row, _ := setupTestFileRow()
+		const maxBufferSize = 8
+		dw, err := file.NewDirectWriter("Sheet1", maxBufferSize)
+		require.NoError(t, err)
+		require.NoError(t, dw.SetWait(true))
+
+		go dw.WriteTo(io.Discard) //nolint
+		// loop waiting for the goroutine to launch and register the writer
+		for {
+			dw.Lock()
+			w := dw.out
+			dw.Unlock()
+			if w != nil {
+				break
+			}
+		}
+
+		buffered, err := dw.AddRow(row)
+		assert.NoError(t, err)
+		assert.True(t, buffered > maxBufferSize, "buffer should not have been flushed in wait mode")
+
+		require.NoError(t, dw.SetWait(false))
+
+		buffered, err = dw.AddRow(row)
+		assert.NoError(t, err)
+		assert.Equal(t, 0, buffered, "buffer should have been flushed since wait mode is now disabled")
 	})
 }
 
